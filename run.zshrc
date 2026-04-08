@@ -1,0 +1,1 @@
+alias build-game='g++ main.cpp -o mygame -I/opt/homebrew/include -L/opt/homebrew/lib -lraylib -framework IOKit -framework Cocoa -framework OpenGL && ./mygame'
