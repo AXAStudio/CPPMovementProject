@@ -54,6 +54,14 @@ const float DASH_AIR_LIFT          = 2.2f;
 const float DASH_FOV_BOOST         = 18.0f;
 const float DASH_TILT              = 6.0f;
 
+struct RLControl {
+    Vector3 moveInput = { 0, 0, 0 };
+    bool dash = false;
+    bool jump = false;
+    float yawDelta = 0.0f;
+    float pitchDelta = 0.0f;
+};
+
 bool ResolveCollision(Vector3& pos, Vector3& vel, float radius, const Box& box, bool& grounded, Vector3& outNormal) {
     Vector3 min = Vector3Subtract(box.center, box.half);
     Vector3 max = Vector3Add(box.center, box.half);
@@ -118,30 +126,47 @@ struct Player {
     float dashTimer = 0.0f;
     float dashVisualTimer = 0.0f;
 
+    // reinforcement learning bookkeeping
+    float rlReward = 0.0f;
+    float rlEpisodeReward = 0.0f;
+    float rlPreviousTargetDistance = 0.0f;
+    int rlSteps = 0;
+    bool rlDone = false;
+    Vector3 rlTarget = { 0, 0, 0 };
+
     float health = MAX_HEALTH;
     float stamina = MAX_STAMINA;
 
     Camera3D camera = { 0 };
 
-    void Update(float dt, const std::vector<Box>& obstacles, bool meleeLocked, bool katanaActive, float katanaNorm) {
-        Vector2 mouse = GetMouseDelta();
-        yaw -= mouse.x * MOUSE_SENSITIVITY;
-        pitch = Clamp(pitch - mouse.y * MOUSE_SENSITIVITY, -89.0f, 89.0f);
+    void Update(float dt, const std::vector<Box>& obstacles, bool meleeLocked, bool katanaActive, float katanaNorm, bool useRL = false, const RLControl& rlControl = RLControl()) {
+        if (useRL) {
+            yaw -= rlControl.yawDelta;
+            pitch = Clamp(pitch - rlControl.pitchDelta, -89.0f, 89.0f);
+        } else {
+            Vector2 mouse = GetMouseDelta();
+            yaw -= mouse.x * MOUSE_SENSITIVITY;
+            pitch = Clamp(pitch - mouse.y * MOUSE_SENSITIVITY, -89.0f, 89.0f);
+        }
 
         bool wantsSlide   = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_C);
-        bool sprintButton = IsKeyDown(KEY_LEFT_SHIFT);
+        bool sprintButton = useRL ? (Vector3Length(rlControl.moveInput) > 0.1f) : IsKeyDown(KEY_LEFT_SHIFT);
         bool canSprint    = stamina > 5.0f;
         bool sprinting    = sprintButton && onGround && !wantsSlide && canSprint;
-        bool jumpPressed  = IsKeyPressed(KEY_SPACE);
+        bool jumpPressed  = useRL ? rlControl.jump : IsKeyPressed(KEY_SPACE);
 
         Vector3 fwd = { sinf(DEG2RAD * yaw), 0, cosf(DEG2RAD * yaw) };
         Vector3 right = { -fwd.z, 0, fwd.x };
         Vector3 moveInput = { 0, 0, 0 };
 
-        if (IsKeyDown(KEY_W)) moveInput = Vector3Add(moveInput, fwd);
-        if (IsKeyDown(KEY_S)) moveInput = Vector3Subtract(moveInput, fwd);
-        if (IsKeyDown(KEY_D)) moveInput = Vector3Add(moveInput, right);
-        if (IsKeyDown(KEY_A)) moveInput = Vector3Subtract(moveInput, right);
+        if (useRL) {
+            moveInput = rlControl.moveInput;
+        } else {
+            if (IsKeyDown(KEY_W)) moveInput = Vector3Add(moveInput, fwd);
+            if (IsKeyDown(KEY_S)) moveInput = Vector3Subtract(moveInput, fwd);
+            if (IsKeyDown(KEY_D)) moveInput = Vector3Add(moveInput, right);
+            if (IsKeyDown(KEY_A)) moveInput = Vector3Subtract(moveInput, right);
+        }
 
         if (Vector3Length(moveInput) > 0.1f) {
             moveInput = Vector3Normalize(moveInput);
@@ -155,7 +180,8 @@ struct Player {
 
         isDashing = dashTimer > 0.0f;
 
-        if (!meleeLocked && IsKeyPressed(KEY_E) && dashCooldown <= 0.0f) {
+        bool dashPressed = useRL ? rlControl.dash : (!meleeLocked && IsKeyPressed(KEY_E));
+        if (dashPressed && !meleeLocked && dashCooldown <= 0.0f) {
             dashCooldown = DASH_COOLDOWN_TIME;
             dashTimer = DASH_TIME;
             dashVisualTimer = DASH_TIME;
@@ -416,5 +442,86 @@ struct Player {
         });
 
         camera.fovy = currentFOV;
+
+        if (rlTarget.x != 0 || rlTarget.y != 0 || rlTarget.z != 0) {
+            UpdateRLReward(dt);
+        }
+    }
+
+    void ResetRL(const Vector3& start, const Vector3& target) {
+        position = start;
+        velocity = { 0, 0, 0 };
+        yaw = 180.0f;
+        pitch = 0.0f;
+        currentFOV = FOV_DEFAULT;
+        currentBob = 0.0f;
+        onGround = false;
+        isSliding = false;
+        isWallRunning = false;
+        isDashing = false;
+        wallNormal = { 0, 0, 0 };
+        dashDir = { 0, 0, 1 };
+        slideTimer = 0.0f;
+        landTimer = 0.0f;
+        cameraTilt = 0.0f;
+        wallRunGraceTimer = 0.0f;
+        wallRunLockTimer = 0.0f;
+        wallRunTimer = 0.0f;
+        wallRunReattachTimer = 0.0f;
+        headBobTime = 0.0f;
+        dashCooldown = 0.0f;
+        dashTimer = 0.0f;
+        dashVisualTimer = 0.0f;
+        health = MAX_HEALTH;
+        stamina = MAX_STAMINA;
+        camera = { 0 };
+
+        rlReward = 0.0f;
+        rlEpisodeReward = 0.0f;
+        rlPreviousTargetDistance = Vector3Distance(start, target);
+        rlSteps = 0;
+        rlDone = false;
+        rlTarget = target;
+    }
+
+    std::vector<float> GetRLState() const {
+        Vector3 rel = Vector3Subtract(rlTarget, position);
+        float dist = Vector3Length(rel);
+        Vector3 dir = (dist > 0.001f) ? Vector3Scale(rel, 1.0f / dist) : (Vector3){ 0, 0, 0 };
+
+        return {
+            dir.x,
+            dir.y,
+            dir.z,
+            dist / 100.0f,
+            velocity.x / 20.0f,
+            velocity.z / 20.0f,
+            dashCooldown / DASH_COOLDOWN_TIME,
+            onGround ? 1.0f : 0.0f,
+            isWallRunning ? 1.0f : 0.0f,
+            isDashing ? 1.0f : 0.0f
+        };
+    }
+
+    void UpdateRLReward(float dt) {
+        if (rlDone) return;
+
+        float currentDistance = Vector3Distance(position, rlTarget);
+        float progressReward = (rlPreviousTargetDistance - currentDistance) * 0.08f;
+        float dashBonus = isDashing ? 0.18f * dt : 0.0f;
+        float wallrunBonus = isWallRunning ? 0.25f * dt : 0.0f;
+        float timePenalty = -0.015f * dt;
+
+        float reward = progressReward + dashBonus + wallrunBonus + timePenalty;
+
+        if (currentDistance < 2.0f) {
+            reward += 2.5f;
+            rlDone = true;
+        }
+
+        rlPreviousTargetDistance = currentDistance;
+        rlReward = reward;
+        rlEpisodeReward += reward;
+        rlSteps += 1;
     }
 };

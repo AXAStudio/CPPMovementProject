@@ -92,6 +92,8 @@ int main() {
     KatanaFX katana;
     World world;
 
+    player.ResetRL(world.startPoint, world.goalPoint);
+
     float spread = 0.0f;
     int lastTrailStep = -1;
 
@@ -106,6 +108,10 @@ int main() {
         player.Update(dt, world.obstacles, katana.active, katana.active, katana.Normalized());
         hit.Update(dt);
         katana.Update(dt);
+
+        if (IsKeyPressed(KEY_R)) {
+            player.ResetRL(world.startPoint, world.goalPoint);
+        }
 
         // if (katana.active) {
         //     int trailStep = (int)(katana.Normalized() * 12.0f);
@@ -204,6 +210,10 @@ int main() {
 
             DrawText(TextFormat("SPEED: %02.0f", hSpeed), 20, 20, 20, WHITE);
             DrawText(TextFormat("KATANA (Q): %s", katana.cooldown <= 0.0f ? "READY" : "COOLDOWN"), 20, 46, 20, katana.cooldown <= 0.0f ? SKYBLUE : GRAY);
+            DrawText(TextFormat("RL STEP REWARD: %.2f", player.rlReward), 20, 72, 20, YELLOW);
+            DrawText(TextFormat("EPISODE REWARD: %.2f", player.rlEpisodeReward), 20, 98, 20, YELLOW);
+            DrawText(TextFormat("DIST TO GOAL: %.1f", Vector3Distance(player.position, world.goalPoint)), 20, 124, 20, WHITE);
+            DrawText("Press R to reset RL episode", 20, 150, 16, LIGHTGRAY);
 
             if (player.isWallRunning) DrawText("WALLRUNNING", cx - 60, cy + 60, 20, GREEN);
             if (player.isDashing) DrawText("DASH", cx - 25, cy + 84, 20, SKYBLUE);

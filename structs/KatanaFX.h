@@ -4,7 +4,7 @@
 #include "SlashParticle3D.h"
 
 const float KATANA_COOLDOWN_TIME   = 0.55f;
-const float KATANA_SWING_TIME      = 0.10f;
+const float KATANA_SWING_TIME      = 0.30f;
 const float KATANA_RANGE           = 4.5f;
 const float KATANA_RADIUS          = 0.9f;
 const float KATANA_FOV_BOOST       = 8.0f;
@@ -77,8 +77,8 @@ struct KatanaFX {
         float xStart = -0.45f * slashSide;
         float xEnd   =  0.45f * slashSide;
 
-        float yStart =  0.3f;
-        float yEnd   = -0.2f;
+        float yStart =  0.1f;
+        float yEnd   = -0.1f;
 
         float zStart =  0.03f;
         float zEnd   = -0.05f;

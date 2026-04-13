@@ -9,6 +9,8 @@
 struct World {
     std::vector<Box> obstacles;
     Texture2D gridTexture;
+    Vector3 startPoint = { 0, 5.0f, 52 };
+    Vector3 goalPoint = { 0, 4.85f, -52 };
 
     World() {
         gridTexture = GenerateGridTexture();
@@ -197,6 +199,9 @@ struct World {
                 (Color){0, 0, 0, 120}
             );
         }
+
+        DrawSphere(goalPoint, 1.2f, YELLOW);
+        DrawSphereWires(goalPoint, 1.2f, 16, 16, GOLD);
     }
 
     static Texture2D GenerateGridTexture() {
