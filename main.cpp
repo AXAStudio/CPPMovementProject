@@ -8,6 +8,7 @@
 #include "structs/SlashParticle3D.h"
 #include "structs/KatanaFX.h"
 #include "structs/Player.h"
+#include "structs/World.h"
 
 
 const char* postProcessCode = R"(
@@ -29,13 +30,6 @@ void main() {
 }
 )";
 
-Texture2D GenerateGridTexture() {
-    Image img = GenImageChecked(512, 512, 64, 64, (Color){40, 40, 40, 255}, (Color){60, 60, 60, 255});
-    Texture2D tex = LoadTextureFromImage(img);
-    UnloadImage(img);
-    return tex;
-}
-
 void DrawHitmarker(int cx, int cy, float timer, float maxTime) {
     float t = 1.0f - (timer / maxTime);
     float gap = 2.0f + t * 8.0f;
@@ -56,12 +50,6 @@ void DrawCrosshair(int cx, int cy, float spread) {
     DrawRectangle(cx - 1, cy - gap - 8, 2, 8, WHITE);
     DrawRectangle(cx - 1, cy + gap,     2, 8, WHITE);
     DrawRectangle(cx - 1, cy - 1,       2, 2, RED);
-}
-
-void DrawCubeWithTexture(Texture2D tex, Vector3 center, float w, float h, float d, Color tint) {
-    rlSetTexture(tex.id);
-    DrawCube(center, w, h, d, tint);
-    rlSetTexture(0);
 }
 
 void DrawStatusBar(float x, float y, float width, float height, float value, float maxValue, Color fill, const char* label) {
@@ -96,21 +84,13 @@ int main() {
     SetTargetFPS(144);
     DisableCursor();
 
-    Texture2D gridTex = GenerateGridTexture();
     Shader ppShader = LoadShaderFromMemory(0, postProcessCode);
     RenderTexture2D renderTarget = LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
 
     Player player;
     HitMarker hit;
     KatanaFX katana;
-
-    std::vector<Box> obstacles = {
-        {{  5, 2,   0 }, { 2,   2,   2   }, ORANGE},
-        {{ -5, 0.5f,-5 }, { 1.5f,0.5f,1.5f}, BLUE},
-        {{  0, 4, -15 }, { 6,   4,   1   }, RED},
-        {{ -8, 3,   5 }, { 1,   3,   6   }, GREEN},
-        {{  8, 1,  10 }, { 2,   1,   2   }, PURPLE},
-    };
+    World world;
 
     float spread = 0.0f;
     int lastTrailStep = -1;
@@ -123,7 +103,7 @@ int main() {
             lastTrailStep = -1;
         }
 
-        player.Update(dt, obstacles, katana.active, katana.active, katana.Normalized());
+        player.Update(dt, world.obstacles, katana.active, katana.active, katana.Normalized());
         hit.Update(dt);
         katana.Update(dt);
 
@@ -138,7 +118,7 @@ int main() {
 
         if (katana.active && !katana.didHitCheck && katana.Normalized() >= 0.25f) {
             katana.didHitCheck = true;
-            for (const auto& box : obstacles) {
+            for (const auto& box : world.obstacles) {
                 if (BoxWithinMeleeRange(player.camera, box)) {
                     hit.Trigger();
                     break;
@@ -158,7 +138,7 @@ int main() {
             Vector3 shotDir = Vector3Normalize(Vector3Subtract(player.camera.target, player.camera.position));
             Ray ray = { player.camera.position, shotDir };
 
-            for (const auto& box : obstacles) {
+            for (const auto& box : world.obstacles) {
                 BoundingBox bb = {
                     Vector3Subtract(box.center, box.half),
                     Vector3Add(box.center, box.half)
@@ -174,12 +154,7 @@ int main() {
         BeginTextureMode(renderTarget);
             ClearBackground((Color){20, 25, 30, 255});
             BeginMode3D(player.camera);
-                DrawPlane({0, 0, 0}, {200, 200}, DARKGRAY);
-
-                for (const auto& b : obstacles) {
-                    DrawCubeWithTexture(gridTex, b.center, b.half.x * 2.0f, b.half.y * 2.0f, b.half.z * 2.0f, b.color);
-                    DrawCubeWires(b.center, b.half.x * 2.0f, b.half.y * 2.0f, b.half.z * 2.0f, (Color){0, 0, 0, 100});
-                }
+                world.Draw(player.camera);
 
                 katana.Draw3D(player.camera, player.currentBob);
             EndMode3D();
@@ -238,7 +213,6 @@ int main() {
     }
 
     UnloadShader(ppShader);
-    UnloadTexture(gridTex);
     UnloadRenderTexture(renderTarget);
     CloseWindow();
     return 0;

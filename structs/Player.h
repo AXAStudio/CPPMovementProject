@@ -32,13 +32,19 @@ const float STAMINA_REGEN     = 18.0f;
 
 const float WALLRUN_MIN_SPEED      = 4.5f;
 const float WALLRUN_ATTACH_BOOST   = 1.5f;
-const float WALLRUN_GRAVITY_SCALE  = 0.25f;
+const float WALLRUN_GRAVITY_SCALE  = 0.1f;
 const float WALLRUN_FORWARD_STICK  = 14.0f;
 const float WALLRUN_SIDE_PUSH_OFF  = 1.5f;
 const float WALLRUN_MIN_PARALLEL   = 0.15f;
 const float WALLRUN_GRACE_TIME     = 0.18f;
 const float WALLRUN_JUMP_HBOOST    = 10.0f;
 const float WALLRUN_JUMP_VBOOST    = 9.5f;
+
+// smoother wallrun constraints
+const float WALLRUN_DOWNWARD_FORCE    = 0.0f;
+const float WALLRUN_REATTACH_COOLDOWN = 0.0f;
+const float WALLRUN_MIN_DESCEND_SPEED = 0.0f;
+const float WALLRUN_SINK_RAMP         = 0.0f;
 
 const float DASH_COOLDOWN_TIME     = 1.35f;
 const float DASH_POWER             = 23.0f;
@@ -103,6 +109,10 @@ struct Player {
     float wallRunGraceTimer = 0.0f;
     float wallRunLockTimer = 0.0f;
 
+    // wallrun state
+    float wallRunTimer = 0.0f;
+    float wallRunReattachTimer = 0.0f;
+
     float headBobTime = 0.0f;
     float dashCooldown = 0.0f;
     float dashTimer = 0.0f;
@@ -141,6 +151,8 @@ struct Player {
         dashCooldown = fmaxf(0.0f, dashCooldown - dt);
         dashTimer = fmaxf(0.0f, dashTimer - dt);
         dashVisualTimer = fmaxf(0.0f, dashVisualTimer - dt);
+        wallRunReattachTimer = fmaxf(0.0f, wallRunReattachTimer - dt);
+
         isDashing = dashTimer > 0.0f;
 
         if (!meleeLocked && IsKeyPressed(KEY_E) && dashCooldown <= 0.0f) {
@@ -159,10 +171,13 @@ struct Player {
 
             isSliding = false;
             isWallRunning = false;
+            wallRunTimer = 0.0f;
+            wallRunReattachTimer = WALLRUN_REATTACH_COOLDOWN;
         }
 
         if (onGround) {
             isWallRunning = false;
+            wallRunTimer = 0.0f;
 
             if (wantsSlide && sprinting && !isSliding && !isDashing && !meleeLocked) {
                 isSliding = true;
@@ -196,7 +211,19 @@ struct Player {
             isSliding = false;
 
             if (isWallRunning) {
+                wallRunTimer += dt;
+
+                // Normal reduced gravity while attached to wall
                 velocity.y += GRAVITY * WALLRUN_GRAVITY_SCALE * dt;
+
+                // Gradually stronger sink the longer you stay on the wall
+                float extraSink = WALLRUN_DOWNWARD_FORCE + wallRunTimer * WALLRUN_SINK_RAMP;
+                velocity.y -= extraSink * dt;
+
+                // Prevent upward/neutral hovering while attached
+                if (velocity.y > WALLRUN_MIN_DESCEND_SPEED) {
+                    velocity.y = WALLRUN_MIN_DESCEND_SPEED;
+                }
 
                 Vector3 horizVel = { velocity.x, 0, velocity.z };
                 float horizSpeed = Vector3Length(horizVel);
@@ -216,7 +243,11 @@ struct Player {
                 stamina -= STAMINA_DRAIN * 0.45f * dt;
 
                 float fwdAlignment = Vector3DotProduct(fwd, wallTangent);
-                if (fwdAlignment < -0.35f) isWallRunning = false;
+                if (fwdAlignment < -0.35f) {
+                    isWallRunning = false;
+                    wallRunTimer = 0.0f;
+                    wallRunReattachTimer = WALLRUN_REATTACH_COOLDOWN;
+                }
 
                 if (jumpPressed) {
                     Vector3 jumpAway = Vector3Add(
@@ -227,8 +258,11 @@ struct Player {
                     velocity.x = jumpAway.x;
                     velocity.z = jumpAway.z;
                     velocity.y = WALLRUN_JUMP_VBOOST;
+
                     isWallRunning = false;
+                    wallRunTimer = 0.0f;
                     wallRunLockTimer = 0.0f;
+                    wallRunReattachTimer = WALLRUN_REATTACH_COOLDOWN;
                 }
             } else if (!isDashing) {
                 velocity.x += moveInput.x * MOVE_SPEED * AIR_ACCEL * dt * 10.0f;
@@ -284,9 +318,19 @@ struct Player {
                     float wallParallel = fabsf(Vector3DotProduct(velDir, wallTangent));
                     float horizSpeed = Vector3Length(horizVel);
 
-                    if (!onGround && !isDashing && horizSpeed > WALLRUN_MIN_SPEED && wallParallel > WALLRUN_MIN_PARALLEL) {
+                    if (!onGround &&
+                        !isDashing &&
+                        wallRunReattachTimer <= 0.0f &&
+                        horizSpeed > WALLRUN_MIN_SPEED &&
+                        wallParallel > WALLRUN_MIN_PARALLEL) {
+
                         wallRunEligible = true;
-                        isWallRunning = true;
+
+                        if (!isWallRunning) {
+                            isWallRunning = true;
+                            wallRunTimer = 0.0f;
+                        }
+
                         wallNormal = hitNormal;
                         wallRunLockTimer = 0.12f;
 
@@ -298,7 +342,9 @@ struct Player {
                         velocity.x = wallTangent.x * boostedSpeed;
                         velocity.z = wallTangent.z * boostedSpeed;
 
-                        if (velocity.y < 0.0f) velocity.y *= 0.25f;
+                        if (velocity.y > WALLRUN_MIN_DESCEND_SPEED) {
+                            velocity.y = WALLRUN_MIN_DESCEND_SPEED;
+                        }
                     }
                 }
             }
@@ -311,6 +357,7 @@ struct Player {
 
         if (!touchedWall && wallRunGraceTimer <= 0.0f && wallRunLockTimer <= 0.0f) {
             isWallRunning = false;
+            wallRunTimer = 0.0f;
         }
 
         if (onGround && !wasGrounded) landTimer = 0.16f;
